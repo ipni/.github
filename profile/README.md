@@ -1,4 +1,4 @@
-![banner](banner.png)
+![banner](https://raw.githubusercontent.com/ipni/.github/main/profile/banner.png)
 
 # IPNI
 Welcome to the InterPlanetary Network Indexer (IPNI) organization on GitHub.
