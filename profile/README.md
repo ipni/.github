@@ -11,7 +11,7 @@ See:
  * [`storetheindex`](https://github.com/ipni/storetheindex) - a reference implementation of IPNI indexer nodes.
  * [`index-provider`](https://github.com/ipni/index-provider) - a Golang library to advertise content onto IPNI.
  * [`go-libipni`](https://github.com/ipni/go-libipni) - a Golang library of common utilities to build out your own IPNI integration.
- * [`deptue`](https://github.com/ipni/depute) - a gRPC wrapper to advertise content onto IPNI from just about any other programming language.
+ * [`depute`](https://github.com/ipni/depute) - a gRPC wrapper to advertise content onto IPNI from just about any other programming language.
  
 Find us on [FileCoin Slack #ipni](https://filecoinproject.slack.com/archives/C02T827T9N0) channel.
 
