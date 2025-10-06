@@ -13,7 +13,12 @@ See:
  * [`go-libipni`](https://github.com/ipni/go-libipni) - a Golang library of common utilities to build out your own IPNI integration.
  * [`depute`](https://github.com/ipni/depute) - a gRPC wrapper to advertise content onto IPNI from just about any other programming language.
  * [`relayX`](https://github.com/ipni/relayx) - separates ingest logic from the underlying indexer, which allows further scaling.
- 
+
+## Monitoring and Debugging
+- [Dashboard](https://dev.probelab.io/ipfs/ipni/cid.contact) - system-wide performance, latency, error rates
+- [Script for verifying providing as a publisher](https://github.com/ipni/ipni-cli/blob/main/pkg/verify/verify.go)
+
+## Chat
 Find us on [Filecoin Slack in the #ipni](https://filecoinproject.slack.com/archives/C02T827T9N0) channel.
 
 :heart: 
