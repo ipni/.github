@@ -15,7 +15,8 @@ See:
  * [`relayX`](https://github.com/ipni/relayx) - separates ingest logic from the underlying indexer, which allows further scaling.
 
 ## Monitoring and Debugging
-- [Dashboard](https://dev.probelab.io/ipfs/ipni/cid.contact) - system-wide performance, latency, error rates
+- [CID Contact Status](https://status.cid.contact/) - system-wide performance, latency, error rates
+- [Probelab IPNI Public Monitoring](https://probelab.io/ipfs/ipni/cid.contact/) - externally observed performance and status
 - [Script for verifying providing as a publisher](https://github.com/ipni/ipni-cli/blob/main/pkg/verify/verify.go)
 
 ## Chat
