@@ -130,6 +130,7 @@ jobs:
             echo "model=$model_id"
             echo "effort=$effort"
             echo "base_ref=$base_ref"
+            echo "started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
             echo "focus<<$delim"
             printf '%s\n' "$focus"
             echo "$delim"
@@ -152,6 +153,9 @@ jobs:
           CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: "1"
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # Show Claude's turns in the run summary. Its tools are read-only and
+          # only people with write access can trigger it.
+          display_report: true
           claude_args: >-
             --model ${{ steps.cfg.outputs.model }}
             --effort ${{ steps.cfg.outputs.effort }}
@@ -209,6 +213,24 @@ jobs:
               <sub>MODEL at EFFORT effort · requested by REQUESTED BY · re-run with `@claude review [sonnet|opus|fable] [low|medium|high|xhigh|max]`</sub>
               (substitute the values from the top of this prompt).
             - Do not approve, request changes, push commits or edit files.
+
+      # Claude can finish "successfully" without posting anything (e.g. if gh
+      # can't reach GitHub). Treat that as a failure so it is reported below.
+      - name: Check the review was posted
+        if: steps.cfg.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ steps.cfg.outputs.pr }}
+          STARTED_AT: ${{ steps.cfg.outputs.started_at }}
+        run: |
+          n=$(gh api --paginate "repos/$REPO/issues/$PR_NUMBER/comments?since=$STARTED_AT" \
+            --jq "[.[] | select(.user.type == \"Bot\" and .created_at >= \"$STARTED_AT\" and (.body | test(\"Claude review\"; \"i\")))] | length" \
+            | awk '{s += $1} END {print s + 0}')
+          if [ "$n" -eq 0 ]; then
+            echo "::error::Claude finished without posting a review comment. See the run summary for its turns."
+            exit 1
+          fi
 
       - name: Report failure on the PR
         if: failure()
