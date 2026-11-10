@@ -1,0 +1,6 @@
+{
+  "name": "Claude review",
+  "description": "Claude reviews new PRs; re-run with an `@claude review` comment, optionally naming a model and effort.",
+  "iconName": "octicon code-review",
+  "categories": ["Code review"]
+}
