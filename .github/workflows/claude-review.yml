@@ -1,0 +1,220 @@
+# Shared Claude code review for every repo in the ipni org.
+#
+# Repos opt in with the small caller in workflow-templates/claude-review.yml.
+# It runs on its own when a non-draft PR is opened or marked ready for review,
+# and again whenever someone with write access comments:
+#
+#   @claude review                      default model and effort (sonnet, high)
+#   @claude review opus                 Claude Opus 5.5
+#   @claude review fable max            Claude Fable 5.2 at max effort
+#   @claude review opus xhigh focus on the locking in engine.go
+#
+# Words after the options (and any following lines) are passed to the reviewer
+# as extra focus. `model=` and `effort=` prefixes are also accepted.
+name: Claude review
+
+on:
+  workflow_call:
+    inputs:
+      default_model:
+        description: "Model used when the comment names none: sonnet, opus, fable, or a full claude-* model ID"
+        type: string
+        default: sonnet
+      default_effort:
+        description: "Effort used when the comment names none: low, medium, high, xhigh or max"
+        type: string
+        default: high
+      timeout_minutes:
+        type: number
+        default: 60
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN:
+        required: true
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.timeout_minutes }}
+    # A new request for the same PR replaces a review still in progress.
+    concurrency:
+      group: claude-review-${{ github.repository }}-${{ github.event.pull_request.number || github.event.issue.number }}
+      cancel-in-progress: true
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+      id-token: write
+    steps:
+      - name: Resolve PR, model and effort
+        id: cfg
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          EVENT: ${{ github.event_name }}
+          COMMENT_BODY: ${{ github.event.comment.body }}
+          COMMENT_ID: ${{ github.event.comment.id }}
+          PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
+          DEFAULT_MODEL: ${{ inputs.default_model }}
+          DEFAULT_EFFORT: ${{ inputs.default_effort }}
+        run: |
+          set -euo pipefail
+
+          model="$DEFAULT_MODEL"
+          effort="$DEFAULT_EFFORT"
+          focus=""
+
+          if [ "$EVENT" = "issue_comment" ]; then
+            # Everything after the first "@claude review" (followed by a space or
+            # end of line) in the comment, preceded by a MATCH marker line.
+            after=$(printf '%s\n' "$COMMENT_BODY" | tr -d '\r' | awk '
+              found { print; next }
+              {
+                i = index(tolower($0), "@claude review")
+                if (i > 0) {
+                  tail = substr($0, i + length("@claude review"))
+                  if (tail == "" || substr(tail, 1, 1) ~ /[ \t]/) { found = 1; print "MATCH"; print tail }
+                }
+              }')
+            if [ "$(printf '%s\n' "$after" | head -n 1)" != "MATCH" ]; then
+              echo "No '@claude review' command in the comment; nothing to do."
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            opts_line=$(printf '%s\n' "$after" | sed -n 2p)
+            rest_lines=$(printf '%s\n' "$after" | tail -n +3)
+
+            read -r -a words <<< "$opts_line" || true
+            n=0
+            for w in "${words[@]}"; do
+              lw="${w,,}"
+              case "$lw" in
+                model=*) model="${lw#model=}" ;;
+                effort=*) effort="${lw#effort=}" ;;
+                sonnet|opus|fable|claude-*) model="$lw" ;;
+                low|medium|high|xhigh|max) effort="$lw" ;;
+                *) break ;;
+              esac
+              n=$((n + 1))
+            done
+            focus="${words[*]:n}"
+            if [ -n "$rest_lines" ]; then
+              focus=$(printf '%s\n%s' "$focus" "$rest_lines")
+            fi
+
+            # Let the commenter know the request was picked up.
+            gh api --silent -X POST "repos/$REPO/issues/comments/$COMMENT_ID/reactions" -f content=eyes || true
+          fi
+
+          case "$model" in
+            sonnet) model_id=claude-sonnet-5-5 ;;
+            opus)   model_id=claude-opus-5-5 ;;
+            fable)  model_id=claude-fable-5-2 ;;
+            *)
+              if [[ "$model" =~ ^claude-[a-z0-9.-]+$ ]]; then
+                model_id="$model"
+              else
+                echo "::error::Unknown model '$model'. Use sonnet, opus, fable or a full claude-* model ID."
+                exit 1
+              fi ;;
+          esac
+          case "$effort" in
+            low|medium|high|xhigh|max) ;;
+            *) echo "::error::Unknown effort '$effort'. Use low, medium, high, xhigh or max."; exit 1 ;;
+          esac
+
+          base_ref=$(gh pr view "$PR_NUMBER" -R "$REPO" --json baseRefName --jq .baseRefName)
+
+          delim="EOF_$(openssl rand -hex 8)"
+          {
+            echo "pr=$PR_NUMBER"
+            echo "model=$model_id"
+            echo "effort=$effort"
+            echo "base_ref=$base_ref"
+            echo "focus<<$delim"
+            printf '%s\n' "$focus"
+            echo "$delim"
+          } >> "$GITHUB_OUTPUT"
+
+          echo "Reviewing #$PR_NUMBER with $model_id at $effort effort" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Check out the PR
+        if: steps.cfg.outputs.skip != 'true'
+        uses: actions/checkout@v7
+        with:
+          ref: refs/pull/${{ steps.cfg.outputs.pr }}/head
+          fetch-depth: 0
+
+      - name: Review
+        if: steps.cfg.outputs.skip != 'true'
+        uses: anthropics/claude-code-action@v1
+        env:
+          # Strip Anthropic, cloud and Actions secrets from anything Claude runs.
+          CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: "1"
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          claude_args: >-
+            --model ${{ steps.cfg.outputs.model }}
+            --effort ${{ steps.cfg.outputs.effort }}
+            --allowedTools "Read,Glob,Grep,mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(git diff:*),Bash(git log:*),Bash(git show:*)"
+          prompt: |
+            REPO: ${{ github.repository }}
+            PR NUMBER: ${{ steps.cfg.outputs.pr }}
+            BASE BRANCH: origin/${{ steps.cfg.outputs.base_ref }}
+            REQUESTED BY: ${{ github.actor }}
+            MODEL: ${{ steps.cfg.outputs.model }}
+            EFFORT: ${{ steps.cfg.outputs.effort }}
+
+            You are reviewing a pull request for IPNI, the InterPlanetary Network
+            Indexer: Go services and libraries for content routing (indexer nodes,
+            index providers, the double-hashed store, the indexstar router, and
+            their libp2p and HTTP protocols). These services run on the public
+            internet and handle untrusted input from peers and HTTP clients.
+
+            The PR head is checked out in the working directory with full history.
+            Use `gh pr view`, `gh pr diff` and `git diff origin/<base>...HEAD` to
+            see the change, and read the surrounding code before judging it. Read
+            CLAUDE.md, AGENTS.md and CONTRIBUTING.md first if the repo has them.
+
+            Look for, most important first:
+            1. Correctness: logic errors, wrong edge cases, broken invariants.
+            2. Concurrency: data races, goroutine leaks, deadlocks, missing context
+               cancellation, unbounded channels or buffers.
+            3. Errors and resources: swallowed errors, missing Close/cancel,
+               leaked file handles or streams, retries without backoff.
+            4. Security and abuse: unvalidated input from peers or HTTP, unbounded
+               allocations or loops driven by remote data (advertisement and entry
+               chains, request bodies), signature or authorization checks.
+            5. Compatibility: changes to wire formats, datastore or on-disk
+               layouts, config, metrics, or the exported API of a library that
+               downstream users import; divergence from the IPNI specs.
+            6. Tests: changed behaviour with no test, or tests that cannot fail.
+
+            Do not comment on formatting, anything gofmt, go vet or staticcheck
+            would catch, or matters of taste. Report only problems you have
+            confirmed by reading the code, and for each one give the concrete
+            input or sequence of events that goes wrong. Fewer, solid findings
+            beat many speculative ones.
+
+            Extra focus from the requester (may be empty):
+            ${{ steps.cfg.outputs.focus }}
+
+            How to report:
+            - For each finding on a line in the diff, leave an inline comment with
+              mcp__github_inline_comment__create_inline_comment. Start it with
+              **Blocker**, **Should fix** or **Nit**.
+            - Then post exactly one summary comment with `gh pr comment`:
+              a heading "Claude review", a one-paragraph verdict, then the findings
+              ranked by severity with file:line, or "No issues found." End it with
+              this line, exactly:
+              <sub>MODEL at EFFORT effort · requested by REQUESTED BY · re-run with `@claude review [sonnet|opus|fable] [low|medium|high|xhigh|max]`</sub>
+              (substitute the values from the top of this prompt).
+            - Do not approve, request changes, push commits or edit files.
+
+      - name: Report failure on the PR
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: gh pr comment "$PR_NUMBER" -R "$REPO" --body "Claude review failed to run. See $RUN_URL"
