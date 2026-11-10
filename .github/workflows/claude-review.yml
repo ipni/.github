@@ -224,6 +224,17 @@ jobs:
             - For each finding on a line in the diff, leave an inline comment with
               mcp__github_inline_comment__create_inline_comment. Start it with
               **Blocker**, **Should fix** or **Nit**.
+            - When the fix is small and self-contained (it touches only the lines
+              you are commenting on and needs no change anywhere else, like a
+              missing Close, a wrong comparison or an off-by-one), include it as
+              a GitHub suggestion block so the author can commit it in one click:
+              ```suggestion
+              <replacement lines>
+              ```
+              The block replaces every line in the commented range (startLine
+              to line), so it must be complete, compile, and keep the file's
+              indentation. When a fix needs changes in more than one place, or
+              you are not sure of the exact code, describe it in words instead.
             - Then post exactly one summary comment with `gh pr comment`:
               a heading "Claude review", a one-paragraph verdict, then the findings
               ranked by severity with file:line, or "No issues found." End it with
