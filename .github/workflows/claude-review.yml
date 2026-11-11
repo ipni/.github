@@ -149,14 +149,29 @@ jobs:
       # bubblewrap sandbox, which also needs socat. The action only installs
       # these when allowed_non_write_users is set, so install them here.
       # Without them every Bash call fails and no review gets posted.
+      #
+      # Install only what the runner image lacks (it usually has bwrap, not
+      # socat), first from the package lists it already has, refreshing them
+      # only if that fails. When a runner cannot reach Ubuntu's mirrors
+      # ("Temporary failure resolving 'security.ubuntu.com'"), three full
+      # `apt-get update`s used to take 11 minutes before failing anyway; the
+      # step's timeout now caps that.
       - name: Install sandbox dependencies
         if: steps.cfg.outputs.skip != 'true'
+        timeout-minutes: 6
         run: |
-          for i in 1 2 3; do
-            sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends bubblewrap socat && break
-            echo "apt-get attempt $i failed, retrying..."
-            sleep 5
-          done
+          missing=()
+          command -v bwrap >/dev/null || missing+=(bubblewrap)
+          command -v socat >/dev/null || missing+=(socat)
+          if [ "${#missing[@]}" -gt 0 ]; then
+            apt=(sudo apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=20
+                 -o Acquire::https::Timeout=20 -o DPkg::Lock::Timeout=60)
+            install_missing() { "${apt[@]}" install -y --no-install-recommends "${missing[@]}"; }
+            install_missing || { "${apt[@]}" update -qq; install_missing; } || {
+              echo "::error::Could not install ${missing[*]}: the runner may not reach Ubuntu's mirrors. Re-run the job."
+              exit 1
+            }
+          fi
           command -v bwrap && command -v socat
           # Ubuntu 24.04+ restricts unprivileged user namespaces via AppArmor.
           if [ -f /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then
